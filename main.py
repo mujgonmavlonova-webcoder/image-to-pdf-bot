@@ -1,26 +1,26 @@
 import asyncio
 import logging
 import os
+from aiohttp import web
 from aiogram import Bot, Dispatcher
 from config.settings import BOT_TOKEN
 from handlers import start, image
 
-# Render uchun kichik sun'iy veb-server (Xatolik bermasligi uchun)
-from datetime import datetime
-async def dummy_server():
-    async def handle_client(reader, writer):
-        request = await reader.read(1024)
-        response = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK"
-        writer.write(response)
-        await writer.drain()
-        writer.close()
-        await writer.wait_closed()
+# Render "Sog'lomlik testi" (Health Check) uchun aiohttp veb-serveri
+async def handle_root(request):
+    return web.Response(text="Bot is running smoothly!")
 
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get("/", handle_root)
+    
+    runner = web.AppRunner(app)
+    await runner.setup()
+    
     port = int(os.environ.get("PORT", 10000))
-    server = await asyncio.start_server(handle_client, "0.0.0.0", port)
-    logging.info(f"Dummy server running on port {port}")
-    async with server:
-        await server.serve_forever()
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    logging.info(f"Render uchun veb-server {port}-portda ishga tushdi.")
 
 async def main():
     logging.basicConfig(
@@ -29,23 +29,21 @@ async def main():
     )
 
     if not BOT_TOKEN:
-        logging.error("BOT_TOKEN topilmadi! .env yoki Environment Variables'ni tekshiring.")
+        logging.error("BOT_TOKEN topilmadi! Environment Variables'ni tekshiring.")
         return
 
     bot = Bot(token=BOT_TOKEN)
     dp = Dispatcher()
 
-    # Routerlarni ulash
+    # Routerlarni ro'yxatdan o'tkazish
     dp.include_router(start.router)
     dp.include_router(image.router)
 
-    logging.info("Bot ishga tushmoqda...")
+    # Bir vaqtning o'zida ham veb-serverni, ham botni ishga tushiramiz
+    await start_web_server()
     
-    # Bot va dummy serverni parallel ishga tushiramiz
-    await asyncio.gather(
-        dp.start_polling(bot),
-        dummy_server()
-    )
+    logging.info("Telegram Bot Long Polling rejimida ishga tushmoqda...")
+    await dp.start_polling(bot)
 
 if name == "__main__":
     try:
