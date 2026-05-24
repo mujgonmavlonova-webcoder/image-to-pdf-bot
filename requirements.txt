@@ -2,3 +2,4 @@ aiogram
 Pillow
 img2pdf
 python-dotenv
+aiohttp
