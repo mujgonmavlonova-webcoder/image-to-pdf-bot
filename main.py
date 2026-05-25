@@ -45,7 +45,7 @@ async def main():
     logging.info("Telegram Bot Long Polling rejimida ishga tushmoqda...")
     await dp.start_polling(bot)
 
-if name == "__main__":
+if __name__ == "__main__":
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
