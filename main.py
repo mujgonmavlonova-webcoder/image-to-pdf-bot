@@ -8,7 +8,7 @@ from handlers import start, image
 
 logger = logging.getLogger(__name__)
 
-# Render "Sog'lomlik testi" (Health Check) uchun aiohttp veb-serveri
+# Render "Health Check" (Sog'lomlik testi) uchun aiohttp veb-serveri
 async def handle_root(request):
     return web.Response(text="Bot is running smoothly!")
 
