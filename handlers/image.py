@@ -1,13 +1,3 @@
-"""
-handlers/image.py
-~~~~~~~~~~~~~~~~~
-Handles:
-  • Photo / document upload  → obuna tekshirib, queue ga qo'shish
-  • /convert                 → PDF nomi so'rash (FSM)
-  • PDF nomini kiritish      → PDF yasab yuborish
-  • /cancel                  → navbatni tozalash
-"""
-
 import logging
 import os
 import re
@@ -29,7 +19,7 @@ router = Router(name="image")
 # ── FSM holatlari ─────────────────────────────────────────────────────────────
 
 class ConvertStates(StatesGroup):
-    waiting_for_pdf_name = State()   # foydalanuvchi PDF nomini yozishini kutish
+    waiting_for_pdf_name = State()   # Foydalanuvchi PDF nomini yozishini kutish
 
 
 # ── In-memory queue: { user_id: ["/temp/xxx.jpg", ...] } ─────────────────────
@@ -47,17 +37,16 @@ def _clear_queue(user_id: int) -> list[str]:
 async def _download_to_temp(bot: Bot, file_id: str, extension: str) -> str:
     dest = build_temp_path(settings.TEMP_DIR, extension)
     tg_file = await bot.get_file(file_id)
-    await bot.download_file(tg_file.file_path, dest)   # type: ignore[arg-type]
+    await bot.download_file(tg_file.file_path, dest)
     return dest
 
 
 def _safe_filename(name: str) -> str:
     """Foydalanuvchi kiritgan nomdan xavfsiz fayl nomi yasash."""
     name = name.strip()
-    # Faqat harf, raqam, bo'sh joy, tire, pastki chiziq — qolganini olib tashla
     name = re.sub(r"[^\w\s\-]", "", name, flags=re.UNICODE)
     name = re.sub(r"\s+", "_", name)
-    return name[:64] or "document"   # bo'sh bo'lib qolsa default
+    return name[:64] or "document"
 
 
 # ── Obuna callback ────────────────────────────────────────────────────────────
@@ -68,9 +57,9 @@ async def callback_check_sub(call: CallbackQuery, bot: Bot) -> None:
     subscribed = await check_subscription(bot, user_id)
 
     if subscribed:
-        await call.message.edit_text(   # type: ignore[union-attr]
+        await call.message.edit_text(
             "✅ <b>Rahmat! Obuna tasdiqlandi.</b>\n\n"
-            "Endi menga rasm(lar) yuboring, men ularni PDF ga aylantirib beraman! 🖼️→📄\n\n"
+            "Endi menga rasm(lar) yuboring, men ularni PDF ga aylantirib beraman! 🖼→📄\n\n"
             "Rasmlar yuborib bo'lgach /convert buyrug'ini yuboring.",
             parse_mode="HTML",
         )
@@ -81,11 +70,11 @@ async def callback_check_sub(call: CallbackQuery, bot: Bot) -> None:
         )
 
 
-# ── Rasm qabul qilish (siqilgan — photo) ─────────────────────────────────────
+# ── Har qanday shakldagi rasmlarni qabul qilish (Photo va Document) ──────────
 
-@router.message(F.photo)
-async def handle_photo(message: Message, bot: Bot, state: FSMContext) -> None:
-    user_id = message.from_user.id   # type: ignore[union-attr]
+@router.message(F.photo | F.document)
+async def handle_incoming_image(message: Message, bot: Bot, state: FSMContext) -> None:
+    user_id = message.from_user.id
 
     # Obuna tekshirish
     if not await check_subscription(bot, user_id):
@@ -95,7 +84,7 @@ async def handle_photo(message: Message, bot: Bot, state: FSMContext) -> None:
         )
         return
 
-    # Agar PDF nomi kiritilishini kutayotgan bo'lsa — rasm qabul qilmaymiz
+    # PDF nomi kiritilishi kutilayotgan bo'lsa, rasm qabul qilmaymiz
     current_state = await state.get_state()
     if current_state == ConvertStates.waiting_for_pdf_name:
         await message.reply(
@@ -105,6 +94,7 @@ async def handle_photo(message: Message, bot: Bot, state: FSMContext) -> None:
 
     queue = _get_queue(user_id)
 
+    # Maksimal rasmlar sonini tekshirish
     if len(queue) >= settings.MAX_IMAGES_PER_SESSION:
         await message.reply(
             f"⚠️ Navbat to'ldi ({settings.MAX_IMAGES_PER_SESSION} ta rasm).\n"
@@ -112,91 +102,51 @@ async def handle_photo(message: Message, bot: Bot, state: FSMContext) -> None:
         )
         return
 
-    photo = message.photo[-1]   # type: ignore[index]
-    size_mb = get_file_size_mb(photo.file_size or 0)
+    file_id = ""
+    ext = ".jpg"
+    file_size = 0
 
+    # 1-Ssenariy: Srazu kameradan olingan yoki oddiy rasm (Photo)
+    if message.photo:
+        photo = message.photo[-1]  # Eng sifatli o'lchami
+        file_id = photo.file_id
+        file_size = photo.file_size or 0
+        ext = ".jpg"
+
+    # 2-Ssenariy: Sifatni yo'qotmaslik uchun fayl shaklida yuborilgan rasm (Document)
+    elif message.document:
+        doc = message.document
+        filename = doc.file_name or ""
+        mime = doc.mime_type or ""
+
+        if not is_valid_image(filename, mime):
+            await message.reply(
+    "❌ Fayl turi qo'llab-quvvatlanmaydi.\n"
+                "Faqat <b>JPG, JPEG yoki PNG</b> formatdagi rasmlar yuborilsin.",
+                parse_mode="HTML",
+            )
+            return
+
+        file_id = doc.file_id
+        file_size = doc.file_size or 0
+        ext = os.path.splitext(filename.lower())[1] or ".jpg"
+
+    # Hajmni tekshirish
+    size_mb = get_file_size_mb(file_size)
     if size_mb > settings.MAX_FILE_SIZE_MB:
         await message.reply(
-            f"❌ Rasm juda katta ({size_mb} MB). "
-            f"Maksimal hajm: {settings.MAX_FILE_SIZE_MB} MB."
+            f"❌ Rasm juda katta ({size_mb:.1f} MB). Maksimal: {settings.MAX_FILE_SIZE_MB} MB."
         )
         return
 
-    status_msg = await message.reply("⬇️ Rasm yuklanmoqda…")
+    status_msg = await message.reply("⬇️ Yuklanmoqda…")
 
     try:
-        path = await _download_to_temp(bot, photo.file_id, ".jpg")
+        path = await _download_to_temp(bot, file_id, ext)
         queue.append(path)
     except Exception as exc:
-        logger.exception("Photo download failed for user %d", user_id)
+        logger.exception("Download failed for user %d", user_id)
         await status_msg.edit_text(f"❌ Rasmni yuklab bo'lmadi: {exc}")
-        return
-
-    count = len(queue)
-    await status_msg.edit_text(
-        f"✅ <b>{count}-rasm</b> navbatga qo'shildi.\n\n"
-        f"📤 Yana rasm yuboring yoki /convert ni bosing.",
-        parse_mode="HTML",
-    )
-
-
-# ── Rasm qabul qilish (fayl sifatida — document) ─────────────────────────────
-
-@router.message(F.document)
-async def handle_document(message: Message, bot: Bot, state: FSMContext) -> None:
-    user_id = message.from_user.id   # type: ignore[union-attr]
-
-    if not await check_subscription(bot, user_id):
-        await message.reply(
-            "⚠️ Botdan foydalanish uchun avval kanalga obuna bo'ling!",
-            reply_markup=subscribe_keyboard(),
-        )
-        return
-
-    current_state = await state.get_state()
-    if current_state == ConvertStates.waiting_for_pdf_name:
-        await message.reply(
-            "✏️ Iltimos, avval PDF fayl nomini kiriting yoki /cancel ni yuboring."
-        )
-        return
-
-    doc = message.document   # type: ignore[union-attr]
-    filename = doc.file_name or ""
-    mime = doc.mime_type or ""
-
-    if not is_valid_image(filename, mime):
-        await message.reply(
-            "❌ Fayl turi qo'llab-quvvatlanmaydi.\n"
-            "Faqat <b>JPG, JPEG yoki PNG</b> formatdagi rasmlar yuborilsin.",
-            parse_mode="HTML",
-        )
-        return
-
-    queue = _get_queue(user_id)
-
-    if len(queue) >= settings.MAX_IMAGES_PER_SESSION:
-        await message.reply(
-            f"⚠️ Navbat to'ldi ({settings.MAX_IMAGES_PER_SESSION} ta).\n"
-            "/convert yuboring yoki /cancel bilan tozalang.",
-        )
-        return
-
-    size_mb = get_file_size_mb(doc.file_size or 0)
-    if size_mb > settings.MAX_FILE_SIZE_MB:
-        await message.reply(
-            f"❌ Fayl juda katta ({size_mb} MB). Maksimal: {settings.MAX_FILE_SIZE_MB} MB."
-        )
-        return
-
-    ext = os.path.splitext(filename.lower())[1] or ".jpg"
-    status_msg = await message.reply("⬇️ Fayl yuklanmoqda…")
-
-    try:
-        path = await _download_to_temp(bot, doc.file_id, ext)
-        queue.append(path)
-    except Exception as exc:
-        logger.exception("Document download failed for user %d", user_id)
-        await status_msg.edit_text(f"❌ Faylni yuklab bo'lmadi: {exc}")
         return
 
     count = len(queue)
@@ -211,7 +161,7 @@ async def handle_document(message: Message, bot: Bot, state: FSMContext) -> None
 
 @router.message(Command("convert"))
 async def cmd_convert(message: Message, state: FSMContext) -> None:
-    user_id = message.from_user.id   # type: ignore[union-attr]
+    user_id = message.from_user.id
     queue = _get_queue(user_id)
 
     if not queue:
@@ -235,12 +185,11 @@ async def cmd_convert(message: Message, state: FSMContext) -> None:
 
 @router.message(ConvertStates.waiting_for_pdf_name)
 async def receive_pdf_name(message: Message, bot: Bot, state: FSMContext) -> None:
-    user_id = message.from_user.id   # type: ignore[union-attr]
+    user_id = message.from_user.id
 
-    # /cancel buyrug'i bu holatda ham ishlashi uchun
     if message.text and message.text.strip().startswith("/"):
         await state.clear()
-        await message.reply("❌ Bekor qilindi. /cancel buyrug'i ishlatildi.")
+        await message.reply("❌ Bekor qilindi.")
         return
 
     raw_name = message.text or ""
@@ -284,7 +233,7 @@ async def receive_pdf_name(message: Message, bot: Bot, state: FSMContext) -> Non
             caption=(
                 f"✅ <b>PDF tayyor!</b>\n"
                 f"📄 Fayl: <code>{final_filename}</code>\n"
-                f"🖼️ Rasmlar soni: <b>{image_count}</b>"
+                f"🖼 Rasmlar soni: <b>{image_count}</b>"
             ),
             parse_mode="HTML",
         )
@@ -298,7 +247,7 @@ async def receive_pdf_name(message: Message, bot: Bot, state: FSMContext) -> Non
             parse_mode="HTML",
         )
     finally:
-        cleanup_files(*image_paths, pdf_path)
+      cleanup_files(*image_paths, pdf_path)
         _clear_queue(user_id)
 
 
@@ -306,14 +255,14 @@ async def receive_pdf_name(message: Message, bot: Bot, state: FSMContext) -> Non
 
 @router.message(Command("cancel"))
 async def cmd_cancel(message: Message, state: FSMContext) -> None:
-    user_id = message.from_user.id   # type: ignore[union-attr]
+    user_id = message.from_user.id
     leftover = _clear_queue(user_id)
     cleanup_files(*leftover)
     await state.clear()
 
     if leftover:
         await message.reply(
-            f"🗑️ Navbat tozalandi. {len(leftover)} ta rasm o'chirildi.\n"
+            f"🗑 Navbat tozalandi. {len(leftover)} ta rasm o'chirildi.\n"
             "Qayta boshlashingiz mumkin!"
         )
     else:
