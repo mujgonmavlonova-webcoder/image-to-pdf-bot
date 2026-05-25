@@ -34,7 +34,7 @@ async def main():
     bot = Bot(token=settings.BOT_TOKEN)
     dp = Dispatcher()
     
-    # Handlerlarni to'g'ri ulash (Mana shu yerda .router qo'shildi)
+    # Handlerlarni ulash
     dp.include_router(start.router)
     dp.include_router(image.router)
     
