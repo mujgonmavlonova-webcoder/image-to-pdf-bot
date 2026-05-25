@@ -76,7 +76,6 @@ async def callback_check_sub(call: CallbackQuery, bot: Bot) -> None:
 async def handle_incoming_image(message: Message, bot: Bot, state: FSMContext) -> None:
     user_id = message.from_user.id
 
-    # Obuna tekshirish
     if not await check_subscription(bot, user_id):
         await message.reply(
             "⚠️ Botdan foydalanish uchun avval kanalga obuna bo'ling!",
@@ -84,7 +83,6 @@ async def handle_incoming_image(message: Message, bot: Bot, state: FSMContext) -
         )
         return
 
-    # PDF nomi kiritilishi kutilayotgan bo'lsa, rasm qabul qilmaymiz
     current_state = await state.get_state()
     if current_state == ConvertStates.waiting_for_pdf_name:
         await message.reply(
@@ -94,7 +92,6 @@ async def handle_incoming_image(message: Message, bot: Bot, state: FSMContext) -
 
     queue = _get_queue(user_id)
 
-    # Maksimal rasmlar sonini tekshirish
     if len(queue) >= settings.MAX_IMAGES_PER_SESSION:
         await message.reply(
             f"⚠️ Navbat to'ldi ({settings.MAX_IMAGES_PER_SESSION} ta rasm).\n"
@@ -106,14 +103,12 @@ async def handle_incoming_image(message: Message, bot: Bot, state: FSMContext) -
     ext = ".jpg"
     file_size = 0
 
-    # 1-Ssenariy: Srazu kameradan olingan yoki oddiy rasm (Photo)
     if message.photo:
-        photo = message.photo[-1]  # Eng sifatli o'lchami
+        photo = message.photo[-1]
         file_id = photo.file_id
         file_size = photo.file_size or 0
         ext = ".jpg"
 
-    # 2-Ssenariy: Sifatni yo'qotmaslik uchun fayl shaklida yuborilgan rasm (Document)
     elif message.document:
         doc = message.document
         filename = doc.file_name or ""
@@ -121,7 +116,7 @@ async def handle_incoming_image(message: Message, bot: Bot, state: FSMContext) -
 
         if not is_valid_image(filename, mime):
             await message.reply(
-    "❌ Fayl turi qo'llab-quvvatlanmaydi.\n"
+                "❌ Fayl turi qo'llab-quvvatlanmaydi.\n"
                 "Faqat <b>JPG, JPEG yoki PNG</b> formatdagi rasmlar yuborilsin.",
                 parse_mode="HTML",
             )
@@ -131,7 +126,6 @@ async def handle_incoming_image(message: Message, bot: Bot, state: FSMContext) -
         file_size = doc.file_size or 0
         ext = os.path.splitext(filename.lower())[1] or ".jpg"
 
-    # Hajmni tekshirish
     size_mb = get_file_size_mb(file_size)
     if size_mb > settings.MAX_FILE_SIZE_MB:
         await message.reply(
@@ -247,7 +241,7 @@ async def receive_pdf_name(message: Message, bot: Bot, state: FSMContext) -> Non
             parse_mode="HTML",
         )
     finally:
-      cleanup_files(*image_paths, pdf_path)
+        cleanup_files(*image_paths, pdf_path)
         _clear_queue(user_id)
 
 
